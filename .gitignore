@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 data/app.db*
+data/_backup_before_reset/
 data/staff_data.xlsx
 archives/
 .streamlit/secrets.toml
