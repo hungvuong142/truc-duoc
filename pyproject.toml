@@ -1,0 +1,18 @@
+[project]
+name = 'truc-duoc'
+version = '0.1.0'
+requires-python = '>= 3.12'
+dependencies = [
+    "openpyxl>=3.1.5",
+    'pandas',
+    "psycopg2-binary>=2.9.13",
+    "sqlalchemy>=2.0.52",
+    "streamlit>=1.63.0",
+    'unidecode',
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "pytest>=9.1.1",
+]
