@@ -190,6 +190,21 @@ def test_import_duty_weights_df_does_not_delete_existing_rows(temp_db):
     assert set(weights.keys()) == {1, 9}
 
 
+def test_import_duty_weights_df_overrides_same_duty_code(temp_db):
+    """Re-uploading a row with a duty_code that already exists updates it
+    in place instead of erroring or creating a second row."""
+    repository.upsert_duty_weights_df(pd.DataFrame([
+        {"duty_code": 1, "duty_type": "normal_day", "description": "old", "duty_weight": 1.0, "multiplier": None},
+    ]))
+    repository.import_duty_weights_df(pd.DataFrame([
+        {"duty_code": 1, "duty_type": "normal_day", "description": "new", "duty_weight": 2.0, "multiplier": None},
+    ]))
+    weights = repository.get_duty_weights()
+    assert set(weights.keys()) == {1}
+    assert weights[1].description == "new"
+    assert weights[1].duty_weight == 2.0
+
+
 def test_import_holidays_df_upserts_by_natural_key(temp_db):
     repository.add_holiday("Quoc Khanh cu", is_recurring=True, month=9, day=2, year=None)
     df = pd.DataFrame([

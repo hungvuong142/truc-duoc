@@ -19,13 +19,13 @@ from datetime import date
 import streamlit as st
 
 from app import repository
-from app.config import BASE_SHORT_LABELS, BASES, N_TRAILING_MONTHS
+from app.config import BASE_SHORT_LABELS, BASES, N_TRAILING_MONTHS, WEEKDAY_LABELS
 from app.logic.calendar_rules import classify_position, resolve_holiday_name
 from app.logic.weights import compute_monthly_weights, compute_peer_average, compute_single_month_weight
 from app.repository import DuplicateAssignmentError
 from app.ui.access import is_view_only
 
-_WEEKDAY_LABELS = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]  # Monday-start
+_WEEKDAY_LABELS = WEEKDAY_LABELS
 _WEEKEND_WEEKDAYS = {5, 6}  # Python date.weekday(): Saturday=5, Sunday=6
 _TRINH_DO_GROUPS = ("Đại học", "Cao đẳng")
 _MAX_SUGGESTIONS_PER_GROUP = 5
@@ -268,6 +268,22 @@ def _info_dialog(
             st.rerun()
 
 
+@st.dialog("Xóa tất cả lịch trực")
+def _confirm_delete_all_dialog() -> None:
+    st.warning(
+        "Hành động này sẽ xóa **toàn bộ** lịch phân trực đã có (tất cả các tháng, cả hai cơ sở), "
+        "không thể hoàn tác. Bạn có chắc chắn muốn tiếp tục?"
+    )
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button("Có, xóa tất cả", type="primary", width="stretch"):
+            st.session_state["_deleted_all_count"] = repository.delete_all_assignments()
+            st.rerun()
+    with col_no:
+        if st.button("Không, hủy", width="stretch"):
+            st.rerun()
+
+
 def _inject_styles(weeks: list[list[date]], holidays: list) -> None:
     """One consolidated <style> block: chip colors (explicit, matching the
     legend) + per-day background highlights (weekend/holiday, with today's
@@ -338,6 +354,9 @@ def _render_day_cell(day: date, current_month: int, by_date_base: dict, staff_by
 
 
 def render() -> None:
+    if "_deleted_all_count" in st.session_state:
+        st.success(f"Đã xóa {st.session_state.pop('_deleted_all_count')} lượt phân trực.")
+
     today = date.today()
     st.session_state.setdefault("cal_year", today.year)
     st.session_state.setdefault("cal_month", today.month)
@@ -373,6 +392,12 @@ def render() -> None:
         "<span style='color:#6b7280;'>Bấm tên để xem thông tin · bấm + để phân công</span>"
         "</div>"
     )
+
+    if not is_view_only():
+        col_spacer, col_delete_all = st.columns([6, 1])
+        with col_delete_all:
+            if st.button(":material/delete_forever: Xóa tất cả lịch trực", key="cal_delete_all", width="stretch"):
+                _confirm_delete_all_dialog()
 
     weeks = calendar_module.Calendar(firstweekday=0).monthdatescalendar(year, month)
     grid_start, grid_end = weeks[0][0], weeks[-1][-1]

@@ -9,12 +9,22 @@ import calendar
 from datetime import date
 
 import pandas as pd
-from sqlalchemy import select
+import streamlit as st
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
-from app.db import get_session
+from app.db import get_readonly_session, get_session
 from app.logic.types import AssignmentRecord, DutyWeightRule, HolidayRule, StaffInfo
 from app.models import Assignment, DutyWeight, Holiday, Staff
+
+# Staff/duty-weights/holidays change only through explicit edits in the Data
+# tab (rare) but are re-read on almost every rerun (calendar, stats, every
+# dialog). Caching them cuts a Postgres round trip (~150-350ms each over the
+# network, vs microseconds for the old local SQLite file) down to zero on
+# unrelated reruns. Every write path below calls `.clear()` on the relevant
+# cached getter so edits show up immediately; the short TTL is only a
+# safety net for data changed outside the app (e.g. direct SQL).
+_CACHE_TTL_SECONDS = 300
 
 
 def _normalize_bmo_id(value) -> str:
@@ -62,8 +72,9 @@ STAFF_COLUMNS = [
 ]
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
 def get_staff_df(active_only: bool = False) -> pd.DataFrame:
-    with get_session() as session:
+    with get_readonly_session() as session:
         stmt = select(Staff)
         if active_only:
             stmt = stmt.where(Staff.is_active.is_(True))
@@ -120,6 +131,8 @@ def upsert_staff_df(df: pd.DataFrame) -> None:
             stale = session.get(Staff, stale_id)
             if stale is not None:
                 session.delete(stale)
+    get_staff_df.clear()
+    get_all_staff.clear()
 
 
 def import_staff_df(df: pd.DataFrame) -> int:
@@ -153,11 +166,14 @@ def import_staff_df(df: pd.DataFrame) -> int:
             staff.ninh_binh_base = _to_bool(row.get("ninh_binh_base"))
             staff.is_active = _to_bool(row.get("is_active"), default=True)
             count += 1
+    get_staff_df.clear()
+    get_all_staff.clear()
     return count
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
 def get_all_staff(active_only: bool = True) -> list[StaffInfo]:
-    with get_session() as session:
+    with get_readonly_session() as session:
         stmt = select(Staff)
         if active_only:
             stmt = stmt.where(Staff.is_active.is_(True))
@@ -184,8 +200,9 @@ def get_all_staff_by_id(active_only: bool = False) -> dict[str, StaffInfo]:
 DUTY_WEIGHT_COLUMNS = ["duty_code", "duty_type", "description", "duty_weight", "multiplier"]
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
 def get_duty_weights_df() -> pd.DataFrame:
-    with get_session() as session:
+    with get_readonly_session() as session:
         rows = session.scalars(select(DutyWeight)).all()
         data = [{col: getattr(r, col) for col in DUTY_WEIGHT_COLUMNS} for r in rows]
     return pd.DataFrame(data, columns=DUTY_WEIGHT_COLUMNS)
@@ -212,6 +229,8 @@ def upsert_duty_weights_df(df: pd.DataFrame) -> None:
             stale = session.get(DutyWeight, stale_code)
             if stale is not None:
                 session.delete(stale)
+    get_duty_weights_df.clear()
+    get_duty_weights.clear()
 
 
 def import_duty_weights_df(df: pd.DataFrame) -> int:
@@ -230,11 +249,14 @@ def import_duty_weights_df(df: pd.DataFrame) -> int:
             dw.duty_weight = float(row["duty_weight"]) if pd.notna(row.get("duty_weight")) else None
             dw.multiplier = float(row["multiplier"]) if pd.notna(row.get("multiplier")) else None
             count += 1
+    get_duty_weights_df.clear()
+    get_duty_weights.clear()
     return count
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
 def get_duty_weights() -> dict[int, DutyWeightRule]:
-    with get_session() as session:
+    with get_readonly_session() as session:
         rows = session.scalars(select(DutyWeight)).all()
         return {
             r.duty_code: DutyWeightRule(
@@ -249,8 +271,9 @@ def get_duty_weights() -> dict[int, DutyWeightRule]:
 # Holidays
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
 def get_holidays_df(is_recurring: bool) -> pd.DataFrame:
-    with get_session() as session:
+    with get_readonly_session() as session:
         stmt = select(Holiday).where(Holiday.is_recurring.is_(is_recurring))
         rows = session.scalars(stmt).all()
         cols = ["id", "name", "month", "day"] if is_recurring else ["id", "name", "month", "day", "year"]
@@ -258,9 +281,15 @@ def get_holidays_df(is_recurring: bool) -> pd.DataFrame:
     return pd.DataFrame(data, columns=cols)
 
 
+def _clear_holiday_caches() -> None:
+    get_holidays_df.clear()
+    get_all_holidays.clear()
+
+
 def add_holiday(name: str, is_recurring: bool, month: int, day: int, year: int | None) -> None:
     with get_session() as session:
         session.add(Holiday(name=name, is_recurring=is_recurring, month=month, day=day, year=year))
+    _clear_holiday_caches()
 
 
 def delete_holiday(holiday_id: int) -> None:
@@ -268,6 +297,7 @@ def delete_holiday(holiday_id: int) -> None:
         h = session.get(Holiday, holiday_id)
         if h is not None:
             session.delete(h)
+    _clear_holiday_caches()
 
 
 def sync_holidays_df(df: pd.DataFrame, is_recurring: bool) -> None:
@@ -295,6 +325,7 @@ def sync_holidays_df(df: pd.DataFrame, is_recurring: bool) -> None:
             stale = session.get(Holiday, stale_id)
             if stale is not None:
                 session.delete(stale)
+    _clear_holiday_caches()
 
 
 def import_holidays_df(df: pd.DataFrame) -> int:
@@ -323,11 +354,13 @@ def import_holidays_df(df: pd.DataFrame) -> int:
                 session.add(holiday)
             holiday.name = str(row["name"]).strip()
             count += 1
+    _clear_holiday_caches()
     return count
 
 
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
 def get_all_holidays() -> list[HolidayRule]:
-    with get_session() as session:
+    with get_readonly_session() as session:
         rows = session.scalars(select(Holiday)).all()
         return [
             HolidayRule(name=r.name, is_recurring=r.is_recurring, month=r.month, day=r.day, year=r.year)
@@ -344,7 +377,7 @@ class DuplicateAssignmentError(Exception):
 
 
 def get_assignments_for_range(start: date, end: date) -> list[AssignmentRecord]:
-    with get_session() as session:
+    with get_readonly_session() as session:
         stmt = select(Assignment).where(Assignment.duty_date >= start, Assignment.duty_date <= end)
         rows = session.scalars(stmt).all()
         return [
@@ -399,7 +432,7 @@ def find_assignment(duty_date: date, base: str, staff_id: str) -> dict | None:
     """The assignment (if any) for this staff on this date at this base --
     used to detect a same-day cross-base conflict before creating a new one
     at the other base."""
-    with get_session() as session:
+    with get_readonly_session() as session:
         stmt = select(Assignment).where(
             Assignment.duty_date == duty_date, Assignment.base == base, Assignment.staff_id == staff_id
         )
@@ -434,10 +467,18 @@ def move_assignment(assignment_id: int, new_base: str, is_half_day: bool | None 
                 ) from exc
 
 
+def delete_all_assignments() -> int:
+    """Wipe every duty-schedule assignment (all months), used by the
+    calendar page's "Xóa tất cả lịch trực" reset action. Irreversible."""
+    with get_session() as session:
+        result = session.execute(delete(Assignment))
+        return result.rowcount
+
+
 def get_assignments_with_ids_for_range(start: date, end: date) -> list[dict]:
     """Like get_assignments_for_range but keeps the row id, needed by the
     calendar UI to build per-event "unassign" actions."""
-    with get_session() as session:
+    with get_readonly_session() as session:
         stmt = select(Assignment).where(Assignment.duty_date >= start, Assignment.duty_date <= end)
         rows = session.scalars(stmt).all()
         return [

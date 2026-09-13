@@ -36,6 +36,8 @@ EXCHANGE_MULTIPLIER_DUTY_CODE = 9
 # multiplier above when both apply to the same assignment.
 WEEKEND_HALF_DUTY_CODE = 10
 
+WEEKDAY_LABELS = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")  # Monday-start, matches date.weekday()
+
 TRINH_DO_OPTIONS = ("Cao đẳng", "Đại học")
 GIOI_TINH_OPTIONS = ("Nam", "Nữ")
 

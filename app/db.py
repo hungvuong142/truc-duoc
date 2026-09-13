@@ -31,12 +31,27 @@ def _resolve_database_url() -> str | None:
     return os.environ.get("DATABASE_URL") or None
 
 
-def make_engine(db_path: Path = DB_PATH, database_url: str | None = None):
+def make_engine(db_path: Path = DB_PATH, database_url: str | None = None, readonly: bool = False):
+    """`readonly=True` builds a connection pool whose connections are
+    AUTOCOMMIT from the moment they're created, instead of `execution_options`
+    setting it on every checkout (which, measured against Supabase, costs a
+    full extra round trip *every single call* -- setting isolation level is
+    itself a network round trip, not a local/free operation). A normal
+    (non-autocommit) connection also leaves an open transaction after a
+    SELECT, which the pool then has to reset with a ROLLBACK -- another
+    round trip -- before the connection can be reused; AUTOCOMMIT means
+    there's nothing left open to reset. `pool_pre_ping` is skipped here too
+    (that's its own round trip per checkout): a stale pooled connection just
+    raises, and the read is retried on the next rerun with a fresh one --
+    an acceptable trade for reads, not for writes."""
     if database_url:
+        if readonly:
+            return create_engine(database_url, isolation_level="AUTOCOMMIT", pool_recycle=280)
         return create_engine(database_url, pool_pre_ping=True)
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(f"sqlite:///{db_path}")
+    kwargs = {"isolation_level": "AUTOCOMMIT"} if readonly else {}
+    engine = create_engine(f"sqlite:///{db_path}", **kwargs)
 
     @event.listens_for(engine, "connect")
     def _set_sqlite_pragma(dbapi_connection, _connection_record):
@@ -49,7 +64,9 @@ def make_engine(db_path: Path = DB_PATH, database_url: str | None = None):
 
 
 engine = make_engine(database_url=_resolve_database_url())
+read_engine = make_engine(database_url=_resolve_database_url(), readonly=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
+ReadSessionLocal = sessionmaker(bind=read_engine, expire_on_commit=False)
 
 
 def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str) -> None:
@@ -79,5 +96,17 @@ def get_session() -> Session:
     except Exception:
         session.rollback()
         raise
+    finally:
+        session.close()
+
+
+@contextmanager
+def get_readonly_session() -> Session:
+    """Like `get_session`, but for pure reads -- bound to `read_engine`
+    (see `make_engine`'s `readonly` branch) so there's no commit, no
+    pre_ping, and no isolation-level round trip on every call."""
+    session = ReadSessionLocal()
+    try:
+        yield session
     finally:
         session.close()
