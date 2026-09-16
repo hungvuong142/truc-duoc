@@ -6,6 +6,7 @@ dependencies = [
     "openpyxl>=3.1.5",
     'pandas',
     "psycopg2-binary>=2.9.13",
+    "python-docx>=1.2.0",
     "sqlalchemy>=2.0.52",
     "streamlit>=1.63.0",
     'unidecode',

@@ -7,6 +7,7 @@ data/app.db*
 data/_backup_before_reset/
 data/staff_data.xlsx
 archives/
+outputs/
 .streamlit/secrets.toml
 .agents/skills/developing-with-streamlit
 .claude/skills/developing-with-streamlit
