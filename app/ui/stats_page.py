@@ -58,6 +58,7 @@ def _render_weight_stats() -> None:
     all_staff = list(staff_by_id.values())
     holidays = repository.get_all_holidays()
     duty_weights = repository.get_duty_weights()
+    ninh_binh_months = repository.get_ninh_binh_assignment_months()
     assignments = repository.get_assignments_for_year_months(year_months)
 
     if not all_staff:
@@ -70,7 +71,7 @@ def _render_weight_stats() -> None:
         total_selected = 0.0
         for year_, month_ in year_months:
             weight = compute_single_month_weight(
-                staff.bmo_id, year_, month_, assignments, staff_by_id, holidays, duty_weights
+                staff.bmo_id, year_, month_, assignments, holidays, duty_weights, ninh_binh_months
             )
             row[_month_col(year_, month_)] = weight
             total_selected += weight

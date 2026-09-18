@@ -16,15 +16,23 @@ def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
 
 def resolve_assignment_weight(
     assignment: AssignmentRecord,
-    staff: StaffInfo,
     holidays: list[HolidayRule],
     duty_weights: dict[int, DutyWeightRule],
+    ninh_binh_months: frozenset[tuple[str, int, int]] = frozenset(),
 ) -> float:
     """Weight of a single assignment: the day-type weight -- halved when
     the assignment is flagged as a half-day Saturday/Sunday shift -- times
     the one-way Ha-Noi-home -> Ninh-Binh-base exchange multiplier when it
     applies (confirmed one-directional; a Ninh-Binh-home staff working at
-    Ha Noi gets no multiplier). Both adjustments stack."""
+    Ha Noi gets no multiplier). Both adjustments stack.
+
+    Whether the staff counts as Ninh-Binh-home is resolved against
+    `ninh_binh_months` -- the (staff_id, year, month) roster for the
+    assignment's *own* month, not a current-snapshot flag on the staff
+    record. The roster is a monthly rotation (see the "Đi cơ sở Ninh Bình"
+    data tab), so using today's snapshot for a past assignment would
+    silently rewrite that month's duty score every time the current
+    month's roster changes."""
     duty_code = resolve_day_type(assignment.duty_date, holidays)
     base_weight = duty_weights[duty_code].duty_weight or 0.0
 
@@ -32,7 +40,10 @@ def resolve_assignment_weight(
         half_multiplier = duty_weights[WEEKEND_HALF_DUTY_CODE].multiplier or 0.5
         base_weight *= half_multiplier
 
-    is_exchange = assignment.base == BASE_NINH_BINH and not staff.ninh_binh_base
+    is_ninh_binh_home = (
+        assignment.staff_id, assignment.duty_date.year, assignment.duty_date.month
+    ) in ninh_binh_months
+    is_exchange = assignment.base == BASE_NINH_BINH and not is_ninh_binh_home
     if is_exchange:
         multiplier = duty_weights[EXCHANGE_MULTIPLIER_DUTY_CODE].multiplier or 1.0
         return base_weight * multiplier
@@ -44,19 +55,18 @@ def compute_single_month_weight(
     year: int,
     month: int,
     assignments: list[AssignmentRecord],
-    staff_by_id: dict[str, StaffInfo],
     holidays: list[HolidayRule],
     duty_weights: dict[int, DutyWeightRule],
+    ninh_binh_months: frozenset[tuple[str, int, int]] = frozenset(),
 ) -> float:
     """Total duty-weight for one staff member in a single given month."""
-    staff = staff_by_id[staff_id]
     total = 0.0
     for a in assignments:
         if a.staff_id != staff_id:
             continue
         if a.duty_date.year != year or a.duty_date.month != month:
             continue
-        total += resolve_assignment_weight(a, staff, holidays, duty_weights)
+        total += resolve_assignment_weight(a, holidays, duty_weights, ninh_binh_months)
     return total
 
 
@@ -65,10 +75,10 @@ def compute_monthly_weights(
     ref_year: int,
     ref_month: int,
     assignments: list[AssignmentRecord],
-    staff_by_id: dict[str, StaffInfo],
     holidays: list[HolidayRule],
     duty_weights: dict[int, DutyWeightRule],
     n_trailing: int = N_TRAILING_MONTHS,
+    ninh_binh_months: frozenset[tuple[str, int, int]] = frozenset(),
 ) -> dict[str, float]:
     """Per-month duty-weight totals for the reference month and each of the
     `n_trailing` months immediately before it, keyed "YYYY-MM"."""
@@ -77,7 +87,7 @@ def compute_monthly_weights(
         year, month = _shift_month(ref_year, ref_month, delta)
         key = f"{year:04d}-{month:02d}"
         result[key] = compute_single_month_weight(
-            staff_id, year, month, assignments, staff_by_id, holidays, duty_weights
+            staff_id, year, month, assignments, holidays, duty_weights, ninh_binh_months
         )
     return result
 
@@ -90,6 +100,7 @@ def compute_peer_average(
     assignments: list[AssignmentRecord],
     holidays: list[HolidayRule],
     duty_weights: dict[int, DutyWeightRule],
+    ninh_binh_months: frozenset[tuple[str, int, int]] = frozenset(),
 ) -> float:
     """Average total weight for the reference month across active staff
     sharing the given trinh_do (certificate level)."""
@@ -97,9 +108,10 @@ def compute_peer_average(
     if not peers:
         return 0.0
 
-    staff_by_id = {s.bmo_id: s for s in peers}
     totals = [
-        compute_single_month_weight(s.bmo_id, ref_year, ref_month, assignments, staff_by_id, holidays, duty_weights)
+        compute_single_month_weight(
+            s.bmo_id, ref_year, ref_month, assignments, holidays, duty_weights, ninh_binh_months
+        )
         for s in peers
     ]
     return sum(totals) / len(totals)

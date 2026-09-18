@@ -41,8 +41,14 @@ _WEEKEND_BG = "rgba(37, 99, 235, 0.08)"
 _HOLIDAY_BG = "rgba(220, 38, 38, 0.12)"
 _TODAY_OVERLAY = "rgba(245, 158, 11, 0.5)"  # ~50% opacity, layered on top
 
+# Text color for a chip whose staff is mang_thai/sinh_de, despite still
+# being assigned (the assign dialog warns but lets the user proceed).
+_FLAGGED_TEXT = "#DC2626"
+
 
 def _staff_label(staff) -> str:
+    if classify_position(staff.vi_tri) != "Nội trú":
+        return f"{staff.ho_va_ten} ({staff.trinh_do or '?'}) ({staff.vi_tri})"
     return f"{staff.ho_va_ten} ({staff.bmo_id}) · {staff.trinh_do or '?'}"
 
 
@@ -59,9 +65,10 @@ def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
     return zero_based // 12, zero_based % 12 + 1
 
 
-def _chip_key(entry_id: int, trinh_do: str | None) -> str:
+def _chip_key(entry_id: int, trinh_do: str | None, flagged: bool = False) -> str:
     bucket = "dh" if trinh_do == "Đại học" else "cd"
-    return f"chip_{bucket}_{entry_id}"
+    suffix = "_flag" if flagged else ""
+    return f"chip_{bucket}_{entry_id}{suffix}"
 
 
 def _other_base(base: str) -> str:
@@ -78,6 +85,7 @@ def _suggest_low_weight_staff(
     one adds it to the multiselect instead of typing/searching."""
     holidays = repository.get_all_holidays()
     duty_weights = repository.get_duty_weights()
+    ninh_binh_months = repository.get_ninh_binh_assignment_months()
     month_assignments = repository.get_assignments_for_months(duty_date.year, duty_date.month, 0)
 
     any_suggestion = False
@@ -91,7 +99,8 @@ def _suggest_low_weight_staff(
         weighted = sorted(
             (
                 (s, compute_single_month_weight(
-                    s.bmo_id, duty_date.year, duty_date.month, month_assignments, staff_by_id, holidays, duty_weights
+                    s.bmo_id, duty_date.year, duty_date.month, month_assignments, holidays,
+                    duty_weights, ninh_binh_months,
                 ))
                 for s in peers
             ),
@@ -123,6 +132,29 @@ def _assign_dialog(duty_date: date, base: str, staff_by_id: dict) -> None:
     other_base = _other_base(base)
     is_weekend_day = duty_date.weekday() in _WEEKEND_WEEKDAYS
 
+    def _attempt_assign(ids: list[str], half_day: bool) -> None:
+        # A staff member can't work both bases the same day: assign anyone
+        # free right away, and defer anyone already booked at the other
+        # base to the move-conflict confirmation stage below.
+        conflicts = []
+        errors = []
+        for bmo_id in ids:
+            existing = repository.find_assignment(duty_date, other_base, bmo_id)
+            if existing:
+                conflicts.append({"assignment_id": existing["id"], "staff_id": bmo_id})
+            else:
+                try:
+                    repository.assign_staff(duty_date, base, bmo_id, is_half_day=half_day)
+                except DuplicateAssignmentError as exc:
+                    errors.append(str(exc))
+        if errors:
+            st.error("\n".join(errors))
+        if conflicts:
+            st.session_state[state_key] = {"stage": "conflicts", "conflicts": conflicts, "is_half_day": half_day}
+            st.rerun(scope="fragment")
+        elif not errors:
+            st.rerun()
+
     if state is None:
         st.write(f"Ngày: **{duty_date.strftime('%d/%m/%Y')}** — Cơ sở: **{BASE_SHORT_LABELS[base]}**")
 
@@ -151,28 +183,56 @@ def _assign_dialog(duty_date: date, base: str, staff_by_id: dict) -> None:
         )
 
         if st.button("Phân công", type="primary", disabled=not selected_ids):
-            # A staff member can't work both bases the same day: assign
-            # anyone free right away, and defer anyone already booked at
-            # the other base to the confirmation step below.
-            conflicts = []
-            errors = []
-            for bmo_id in selected_ids:
-                existing = repository.find_assignment(duty_date, other_base, bmo_id)
-                if existing:
-                    conflicts.append({"assignment_id": existing["id"], "staff_id": bmo_id})
-                else:
-                    try:
-                        repository.assign_staff(duty_date, base, bmo_id, is_half_day=half_day)
-                    except DuplicateAssignmentError as exc:
-                        errors.append(str(exc))
-            if errors:
-                st.error("\n".join(errors))
-            if conflicts:
-                st.session_state[state_key] = {"conflicts": conflicts, "is_half_day": half_day}
+            flagged_ids = [
+                bmo_id for bmo_id in selected_ids
+                if (s := staff_by_id.get(bmo_id)) and (s.mang_thai or s.sinh_de)
+            ]
+            if flagged_ids:
+                st.session_state[state_key] = {
+                    "stage": "confirm_flagged",
+                    "queue": flagged_ids,
+                    "accepted_ids": [bmo_id for bmo_id in selected_ids if bmo_id not in flagged_ids],
+                    "is_half_day": half_day,
+                }
                 st.rerun(scope="fragment")
-            elif not errors:
-                st.rerun()
-    else:
+            else:
+                _attempt_assign(selected_ids, half_day)
+
+    elif state["stage"] == "confirm_flagged":
+        queue = state["queue"]
+        half_day = state["is_half_day"]
+        current_id = queue[0]
+        staff = staff_by_id.get(current_id)
+        name = staff.ho_va_ten if staff else current_id
+        st.warning(f"Bạn có muốn phân lịch trực vào nhân viên **{name}** hiện đang mang thai/sinh đẻ?")
+
+        col_yes, col_no = st.columns(2)
+        with col_yes:
+            yes_clicked = st.button(
+                "Có", key=f"preg_yes_{duty_date.isoformat()}_{base}_{current_id}", type="primary", width="stretch"
+            )
+        with col_no:
+            no_clicked = st.button(
+                "Không", key=f"preg_no_{duty_date.isoformat()}_{base}_{current_id}", width="stretch"
+            )
+
+        if yes_clicked or no_clicked:
+            accepted_ids = state["accepted_ids"] + ([current_id] if yes_clicked else [])
+            remaining = queue[1:]
+            if remaining:
+                st.session_state[state_key] = {
+                    "stage": "confirm_flagged", "queue": remaining,
+                    "accepted_ids": accepted_ids, "is_half_day": half_day,
+                }
+                st.rerun(scope="fragment")
+            else:
+                st.session_state.pop(state_key, None)
+                if accepted_ids:
+                    _attempt_assign(accepted_ids, half_day)
+                else:
+                    st.rerun()
+
+    else:  # state["stage"] == "conflicts"
         conflicts = state["conflicts"]
         half_day = state["is_half_day"]
         st.warning(
@@ -200,7 +260,7 @@ def _assign_dialog(duty_date: date, base: str, staff_by_id: dict) -> None:
         if move_clicked or keep_clicked:
             remaining = conflicts[1:]
             if remaining:
-                st.session_state[state_key] = {"conflicts": remaining, "is_half_day": half_day}
+                st.session_state[state_key] = {"stage": "conflicts", "conflicts": remaining, "is_half_day": half_day}
                 st.rerun(scope="fragment")
             else:
                 st.session_state.pop(state_key, None)
@@ -237,11 +297,12 @@ def _info_dialog(
     all_staff = list(staff_by_id.values())
     holidays = repository.get_all_holidays()
     duty_weights = repository.get_duty_weights()
+    ninh_binh_months = repository.get_ninh_binh_assignment_months()
     assignments = repository.get_assignments_for_months(ref_year, ref_month, N_TRAILING_MONTHS)
 
     monthly = compute_monthly_weights(
-        staff_id, ref_year, ref_month, assignments, staff_by_id, holidays, duty_weights,
-        n_trailing=N_TRAILING_MONTHS,
+        staff_id, ref_year, ref_month, assignments, holidays, duty_weights,
+        n_trailing=N_TRAILING_MONTHS, ninh_binh_months=ninh_binh_months,
     )
     for month_key, total in monthly.items():
         st.write(f"{month_key}: **{total:g}** điểm")
@@ -249,6 +310,7 @@ def _info_dialog(
     if staff.trinh_do:
         peer_avg = compute_peer_average(
             staff.trinh_do, ref_year, ref_month, all_staff, assignments, holidays, duty_weights,
+            ninh_binh_months,
         )
         my_total = monthly.get(f"{ref_year:04d}-{ref_month:02d}", 0.0)
         if peer_avg > 0:
@@ -301,6 +363,8 @@ def _inject_styles(weeks: list[list[date]], holidays: list) -> None:
         f"[class*='st-key-chip_cd_'] button {{ "
         f"background-color: {_CAO_DANG_BG} !important; color: {_CAO_DANG_TEXT} !important; "
         f"border-color: {_CAO_DANG_BG} !important; }}",
+        f"[class*='st-key-chip_'][class*='_flag'] button {{ "
+        f"color: {_FLAGGED_TEXT} !important; font-weight: 700; }}",
     ]
 
     today = date.today()
@@ -346,8 +410,9 @@ def _render_day_cell(day: date, current_month: int, by_date_base: dict, staff_by
                     if entry.get("is_half_day"):
                         name = f"{name} (½)"
                     trinh_do = staff.trinh_do if staff else None
+                    flagged = bool(staff and (staff.mang_thai or staff.sinh_de))
                     if st.button(
-                        name, key=_chip_key(entry["id"], trinh_do), width="stretch", wrap=True
+                        name, key=_chip_key(entry["id"], trinh_do, flagged), width="stretch", wrap=True
                     ):
                         _info_dialog(
                             entry["id"], entry["staff_id"], ref_year, ref_month, staff_by_id,

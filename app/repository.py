@@ -10,12 +10,12 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import get_readonly_session, get_session
 from app.logic.types import AssignmentRecord, DutyWeightRule, HolidayRule, StaffInfo
-from app.models import Assignment, DutyWeight, Holiday, Staff
+from app.models import Assignment, DutyWeight, Holiday, NinhBinhAssignment, Staff
 
 # Staff/duty-weights/holidays change only through explicit edits in the Data
 # tab (rare) but are re-read on almost every rerun (calendar, stats, every
@@ -191,6 +191,102 @@ def get_all_staff(active_only: bool = True) -> list[StaffInfo]:
 
 def get_all_staff_by_id(active_only: bool = False) -> dict[str, StaffInfo]:
     return {s.bmo_id: s for s in get_all_staff(active_only=active_only)}
+
+
+# ---------------------------------------------------------------------------
+# Ninh Binh base assignment (per staff, per month) -- Staff.ninh_binh_base is
+# a derived snapshot of this table, recomputed by sync_ninh_binh_base.
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
+def get_ninh_binh_assignments_df(year: int, month: int) -> pd.DataFrame:
+    """Active staff with a checkbox for whether they're marked to go to the
+    Ninh Binh base for this specific (year, month)."""
+    with get_readonly_session() as session:
+        staff_rows = session.scalars(
+            select(Staff).where(Staff.is_active.is_(True)).order_by(Staff.ho_va_ten)
+        ).all()
+        assigned_ids = set(session.scalars(
+            select(NinhBinhAssignment.staff_id).where(
+                NinhBinhAssignment.year == year, NinhBinhAssignment.month == month
+            )
+        ).all())
+        data = [
+            {
+                "bmo_id": s.bmo_id, "ho_va_ten": s.ho_va_ten, "trinh_do": s.trinh_do,
+                "vi_tri": s.vi_tri, "di_ninh_binh": s.bmo_id in assigned_ids,
+            }
+            for s in staff_rows
+        ]
+    return pd.DataFrame(data, columns=["bmo_id", "ho_va_ten", "trinh_do", "vi_tri", "di_ninh_binh"])
+
+
+def save_ninh_binh_assignments(year: int, month: int, staff_ids: list[str]) -> None:
+    """Full sync for one (year, month): `staff_ids` is the exact set of
+    staff checked to go to the Ninh Binh base that month. Also recomputes
+    Staff.ninh_binh_base immediately so the "Nhân viên" sheet reflects the
+    change without waiting for the next app restart."""
+    with get_session() as session:
+        existing = session.scalars(
+            select(NinhBinhAssignment).where(
+                NinhBinhAssignment.year == year, NinhBinhAssignment.month == month
+            )
+        ).all()
+        existing_by_staff = {row.staff_id: row for row in existing}
+        wanted = set(staff_ids)
+
+        for staff_id in wanted - existing_by_staff.keys():
+            session.add(NinhBinhAssignment(staff_id=staff_id, year=year, month=month))
+        for staff_id, row in existing_by_staff.items():
+            if staff_id not in wanted:
+                session.delete(row)
+    get_ninh_binh_assignments_df.clear()
+    get_ninh_binh_assignment_months.clear()
+    sync_ninh_binh_base()
+
+
+def sync_ninh_binh_base(reference_date: date | None = None) -> None:
+    """Recompute Staff.ninh_binh_base from ninh_binh_assignments: True for
+    staff with a row matching the reference (year, month) -- defaulting to
+    today -- False otherwise."""
+    ref = reference_date or date.today()
+    with get_session() as session:
+        assigned_ids = set(session.scalars(
+            select(NinhBinhAssignment.staff_id).where(
+                NinhBinhAssignment.year == ref.year, NinhBinhAssignment.month == ref.month
+            )
+        ).all())
+        session.execute(update(Staff).values(ninh_binh_base=False))
+        if assigned_ids:
+            session.execute(update(Staff).where(Staff.bmo_id.in_(assigned_ids)).values(ninh_binh_base=True))
+    get_staff_df.clear()
+    get_all_staff.clear()
+
+
+@st.cache_data(ttl=_CACHE_TTL_SECONDS)
+def get_ninh_binh_assignment_months() -> frozenset[tuple[str, int, int]]:
+    """Every (staff_id, year, month) ever marked as Ninh Binh base -- the
+    full history, not just the current month. Weight calculations use this
+    to resolve the exchange multiplier (see logic/weights.py) against the
+    staff's Ninh Binh status *as of the assignment's own month*, instead of
+    `Staff.ninh_binh_base` (which is only a snapshot of the current month
+    and would otherwise silently rewrite past months' duty scores every
+    time this month's Ninh Binh roster changes)."""
+    with get_readonly_session() as session:
+        rows = session.scalars(select(NinhBinhAssignment)).all()
+        return frozenset((r.staff_id, r.year, r.month) for r in rows)
+
+
+@st.cache_resource
+def sync_ninh_binh_base_on_startup() -> None:
+    """Runs `sync_ninh_binh_base` exactly once per server process instead of
+    on every script rerun: `st.cache_resource`'s cache is shared across all
+    sessions and reruns until the process restarts (or the cache is
+    cleared), so this avoids an extra write query against the remote DB on
+    every user interaction just to re-derive a value that only changes when
+    the "Đi cơ sở Ninh Bình" sheet is saved (which calls the uncached
+    `sync_ninh_binh_base` directly) or a calendar month boundary passes."""
+    sync_ninh_binh_base()
 
 
 # ---------------------------------------------------------------------------

@@ -9,14 +9,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
+from app import repository
 from app.db import init_db
 from app.ui import calendar_page, data_page, outputs_page, stats_page
 from app.ui.access import is_view_only
 
 st.set_page_config(page_title="Trực dược", layout="wide")
 init_db()
+repository.sync_ninh_binh_base_on_startup()
 
-st.title("Quản lý phân lịch trực")
+col_title, col_refresh = st.columns([6, 1])
+with col_title:
+    st.title("Quản lý phân lịch trực")
+with col_refresh:
+    st.write("")  # vertical spacer to align the button with the title
+    if st.button(
+        "🔄 Làm mới dữ liệu",
+        help=(
+            "Xóa cache và tải lại dữ liệu mới nhất từ database. Dùng khi dữ liệu vừa được "
+            "thay đổi từ bên ngoài app (script migrate, sửa trực tiếp DB...) mà chưa thấy "
+            "cập nhật -- dữ liệu sửa qua các nút Lưu trong app đã tự làm mới, không cần bấm."
+        ),
+    ):
+        st.cache_data.clear()
+        repository.sync_ninh_binh_base_on_startup.clear()
+        st.rerun()
+
 if is_view_only():
     st.info("👁️ Chế độ chỉ xem — không thể chỉnh sửa dữ liệu hoặc lịch trực.")
 

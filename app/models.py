@@ -45,6 +45,23 @@ class Staff(Base):
     assignments: Mapped[list["Assignment"]] = relationship(back_populates="staff")
 
 
+class NinhBinhAssignment(Base):
+    """One row = this staff member is assigned to the Ninh Binh base for
+    this (year, month). `Staff.ninh_binh_base` is a derived snapshot of
+    this table for the current month -- see repository.sync_ninh_binh_base."""
+
+    __tablename__ = "ninh_binh_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    staff_id: Mapped[str] = mapped_column(String, ForeignKey("staff.bmo_id"), nullable=False)
+    year: Mapped[int] = mapped_column(Integer, nullable=False)
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("staff_id", "year", "month", name="uq_ninh_binh_assignment"),
+    )
+
+
 class DutyWeight(Base):
     __tablename__ = "duty_weights"
 

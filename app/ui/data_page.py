@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import streamlit as st
 
 from app import repository
@@ -56,18 +58,72 @@ def _render_staff_editor() -> None:
         "mang_thai": st.column_config.CheckboxColumn("Mang thai"),
         "sinh_de": st.column_config.CheckboxColumn("Sau sinh"),
         "ghi_chu": st.column_config.TextColumn("Ghi chú"),
-        "ninh_binh_base": st.column_config.CheckboxColumn("Cơ sở Ninh Bình"),
+        "ninh_binh_base": st.column_config.CheckboxColumn(
+            "Cơ sở Ninh Bình", help="Tính tự động từ sheet 'Đi cơ sở Ninh Bình' theo tháng hiện tại."
+        ),
         "is_active": st.column_config.CheckboxColumn("Đang làm việc"),
     }
     if view_only:
         st.dataframe(df, hide_index=True, column_config=column_config)
         return
 
-    edited = st.data_editor(df, key="staff_editor", num_rows="dynamic", hide_index=True, column_config=column_config)
+    edited = st.data_editor(
+        df, key="staff_editor", num_rows="dynamic", hide_index=True, column_config=column_config,
+        disabled=["ninh_binh_base"],
+    )
     st.caption("💡 Để xóa một dòng: bấm chọn ô đầu dòng đó rồi nhấn phím Delete, sau đó bấm Lưu.")
     if st.button("Lưu dữ liệu nhân viên", key="save_staff"):
         repository.upsert_staff_df(edited)
         st.success("Đã lưu dữ liệu nhân viên.")
+        st.rerun()
+
+
+def _render_ninh_binh_editor() -> None:
+    st.subheader("Đi cơ sở Ninh Bình")
+    st.caption(
+        "Tích chọn nhân viên đi cơ sở Ninh Bình theo từng tháng. Cột 'Cơ sở Ninh Bình' ở sheet "
+        "Nhân viên phản ánh tháng hiện tại của bảng này (tính lại ngay sau khi lưu, hoặc mỗi khi "
+        "app khởi động lại)."
+    )
+    view_only = is_view_only()
+    today = date.today()
+    col_year, col_month = st.columns(2)
+    with col_year:
+        year = st.number_input(
+            "Năm", min_value=today.year - 3, max_value=today.year + 2,
+            value=today.year, step=1, key="ninh_binh_year",
+        )
+    with col_month:
+        month = st.selectbox(
+            "Tháng", options=list(range(1, 13)), index=today.month - 1,
+            format_func=lambda m: f"Tháng {m:02d}", key="ninh_binh_month",
+        )
+    year, month = int(year), int(month)
+
+    df = repository.get_ninh_binh_assignments_df(year, month)
+    if df.empty:
+        st.info("Chưa có nhân viên đang làm việc để phân công.")
+        return
+
+    column_config = {
+        "bmo_id": st.column_config.TextColumn("Mã NV"),
+        "ho_va_ten": st.column_config.TextColumn("Họ và tên"),
+        "trinh_do": st.column_config.TextColumn("Trình độ"),
+        "vi_tri": st.column_config.TextColumn("Vị trí"),
+        "di_ninh_binh": st.column_config.CheckboxColumn("Đi Ninh Bình"),
+    }
+    if view_only:
+        st.dataframe(df, hide_index=True, column_config=column_config)
+        return
+
+    edited = st.data_editor(
+        df, key=f"ninh_binh_editor_{year}_{month}", hide_index=True, column_config=column_config,
+        disabled=["bmo_id", "ho_va_ten", "trinh_do", "vi_tri"],
+    )
+    if st.button("Lưu danh sách đi Ninh Bình", key="save_ninh_binh"):
+        selected_ids = edited.loc[edited["di_ninh_binh"], "bmo_id"].tolist()
+        repository.save_ninh_binh_assignments(year, month, selected_ids)
+        st.success(f"Đã lưu danh sách đi Ninh Bình tháng {month:02d}/{year}.")
         st.rerun()
 
 
@@ -172,9 +228,13 @@ def _render_holidays_editor() -> None:
 
 
 def render() -> None:
-    tab_staff, tab_weights, tab_holidays = st.tabs(["Nhân viên", "Trọng số trực", "Ngày lễ"])
+    tab_staff, tab_ninh_binh, tab_weights, tab_holidays = st.tabs(
+        ["Nhân viên", "Đi cơ sở Ninh Bình", "Trọng số trực", "Ngày lễ"]
+    )
     with tab_staff:
         _render_staff_editor()
+    with tab_ninh_binh:
+        _render_ninh_binh_editor()
     with tab_weights:
         _render_duty_weights_editor()
     with tab_holidays:
