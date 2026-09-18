@@ -31,10 +31,11 @@ BASE_SHORT_LABELS = {
 # example; confirmed with the user as one-directional).
 EXCHANGE_MULTIPLIER_DUTY_CODE = 9
 
-# Half-day Saturday/Sunday duty: weight is this row's multiplier times the
-# normal full-day Saturday/Sunday weight. Stacks with the exchange
-# multiplier above when both apply to the same assignment.
-WEEKEND_HALF_DUTY_CODE = 10
+# Half-day duty (weekend Saturday/Sunday, or a holiday): weight is this
+# row's multiplier times the normal full-day weight for that day. Stacks
+# with the exchange multiplier above when both apply to the same
+# assignment.
+HALF_DAY_DUTY_CODE = 10
 
 WEEKDAY_LABELS = ("T2", "T3", "T4", "T5", "T6", "T7", "CN")  # Monday-start, matches date.weekday()
 

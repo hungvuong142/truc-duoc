@@ -17,7 +17,7 @@ _TRINH_DO_ORDER = {"Đại học": 0, "Cao đẳng": 1}
 
 
 def _format_half(value: float) -> str:
-    """Render a weekday-duty count that may include half-day (weekend_half)
+    """Render a weekday-duty count that may include half-day (half_day)
     occurrences, e.g. 0.5 -> '1/2', 1.5 -> '1 1/2', 2.0 -> '2'."""
     whole, frac = divmod(round(value * 2), 2)
     if frac == 0:

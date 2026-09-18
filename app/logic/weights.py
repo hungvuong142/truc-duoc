@@ -4,8 +4,8 @@ and peer averages, used to keep duty schedules balanced across staff.
 
 from __future__ import annotations
 
-from app.config import BASE_NINH_BINH, EXCHANGE_MULTIPLIER_DUTY_CODE, N_TRAILING_MONTHS, WEEKEND_HALF_DUTY_CODE
-from app.logic.calendar_rules import DUTY_CODE_SATURDAY, DUTY_CODE_SUNDAY, resolve_day_type
+from app.config import BASE_NINH_BINH, EXCHANGE_MULTIPLIER_DUTY_CODE, HALF_DAY_DUTY_CODE, N_TRAILING_MONTHS
+from app.logic.calendar_rules import DUTY_CODE_HOLIDAY, DUTY_CODE_SATURDAY, DUTY_CODE_SUNDAY, resolve_day_type
 from app.logic.types import AssignmentRecord, DutyWeightRule, HolidayRule, StaffInfo
 
 
@@ -21,9 +21,9 @@ def resolve_assignment_weight(
     ninh_binh_months: frozenset[tuple[str, int, int]] = frozenset(),
 ) -> float:
     """Weight of a single assignment: the day-type weight -- halved when
-    the assignment is flagged as a half-day Saturday/Sunday shift -- times
-    the one-way Ha-Noi-home -> Ninh-Binh-base exchange multiplier when it
-    applies (confirmed one-directional; a Ninh-Binh-home staff working at
+    the assignment is flagged as a half-day shift on a weekend or holiday --
+    times the one-way Ha-Noi-home -> Ninh-Binh-base exchange multiplier when
+    it applies (confirmed one-directional; a Ninh-Binh-home staff working at
     Ha Noi gets no multiplier). Both adjustments stack.
 
     Whether the staff counts as Ninh-Binh-home is resolved against
@@ -36,8 +36,8 @@ def resolve_assignment_weight(
     duty_code = resolve_day_type(assignment.duty_date, holidays)
     base_weight = duty_weights[duty_code].duty_weight or 0.0
 
-    if assignment.is_half_day and duty_code in (DUTY_CODE_SATURDAY, DUTY_CODE_SUNDAY):
-        half_multiplier = duty_weights[WEEKEND_HALF_DUTY_CODE].multiplier or 0.5
+    if assignment.is_half_day and duty_code in (DUTY_CODE_SATURDAY, DUTY_CODE_SUNDAY, DUTY_CODE_HOLIDAY):
+        half_multiplier = duty_weights[HALF_DAY_DUTY_CODE].multiplier or 0.5
         base_weight *= half_multiplier
 
     is_ninh_binh_home = (

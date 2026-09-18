@@ -130,7 +130,6 @@ def _assign_dialog(duty_date: date, base: str, staff_by_id: dict) -> None:
     state_key = f"assign_conflicts_{duty_date.isoformat()}_{base}"
     state: dict | None = st.session_state.get(state_key)
     other_base = _other_base(base)
-    is_weekend_day = duty_date.weekday() in _WEEKEND_WEEKDAYS
 
     def _attempt_assign(ids: list[str], half_day: bool) -> None:
         # A staff member can't work both bases the same day: assign anyone
@@ -158,12 +157,10 @@ def _assign_dialog(duty_date: date, base: str, staff_by_id: dict) -> None:
     if state is None:
         st.write(f"Ngày: **{duty_date.strftime('%d/%m/%Y')}** — Cơ sở: **{BASE_SHORT_LABELS[base]}**")
 
-        half_day = False
-        if is_weekend_day:
-            half_day = st.checkbox(
-                "Trực nửa ngày (weekend_half — trọng số bằng 1/2 ngày trực đầy đủ)",
-                key=f"half_day_{duty_date.isoformat()}_{base}",
-            )
+        half_day = st.checkbox(
+            "Trực nửa ngày (half_day — trọng số bằng 1/2 ngày trực đầy đủ)",
+            key=f"half_day_{duty_date.isoformat()}_{base}",
+        )
 
         ms_key = f"assign_select_{duty_date.isoformat()}_{base}"
         busy_ids = {
@@ -278,7 +275,7 @@ def _info_dialog(
 
     st.markdown(f"### {staff.ho_va_ten}")
     if is_half_day:
-        st.caption("🕐 Trực nửa ngày (weekend_half)")
+        st.caption("🕐 Trực nửa ngày (half_day)")
     st.write(f"Mã nhân viên: {staff.bmo_id}")
     st.write(f"Giới tính: {staff.gioi_tinh or '-'}")
     st.write(f"Điện thoại: {staff.so_dien_thoai or '-'}")
@@ -385,10 +382,28 @@ def _inject_styles(weeks: list[list[date]], holidays: list) -> None:
     st.html(f"<style>{''.join(rules)}</style>")
 
 
+def _render_chip(entry: dict, staff_by_id: dict, ref_year: int, ref_month: int) -> None:
+    staff = staff_by_id.get(entry["staff_id"])
+    name = staff.ho_va_ten if staff else entry["staff_id"]
+    if entry.get("is_half_day"):
+        name = f"{name} (½)"
+    trinh_do = staff.trinh_do if staff else None
+    flagged = bool(staff and (staff.mang_thai or staff.sinh_de))
+    if st.button(name, key=_chip_key(entry["id"], trinh_do, flagged), width="stretch", wrap=True):
+        _info_dialog(
+            entry["id"], entry["staff_id"], ref_year, ref_month, staff_by_id,
+            is_half_day=entry.get("is_half_day", False),
+        )
+
+
 def _render_day_cell(day: date, current_month: int, by_date_base: dict, staff_by_id: dict, holidays: list, ref_year: int, ref_month: int) -> None:
     in_month = day.month == current_month
     number_color = "inherit" if in_month else "#9CA3AF"
     holiday_name = resolve_holiday_name(day, holidays)
+    # half_day duty (see resolve_assignment_weight) only ever applies on a
+    # weekend or a holiday, so only those cells need the 24/24 vs 12/24
+    # split -- a plain weekday cell keeps its single flat list.
+    allows_half_day = day.weekday() in _WEEKEND_WEEKDAYS or holiday_name is not None
 
     header_html = f"<div style='text-align:center;font-size:1.4rem;font-weight:700;color:{number_color};line-height:1.1;'>{day.day}</div>"
     if holiday_name:
@@ -404,20 +419,18 @@ def _render_day_cell(day: date, current_month: int, by_date_base: dict, staff_by
             with sub_col:
                 st.caption(BASE_SHORT_LABELS[base])
                 entries = sorted(by_date_base.get((day, base), []), key=lambda e: _sort_key(e, staff_by_id))
-                for entry in entries:
-                    staff = staff_by_id.get(entry["staff_id"])
-                    name = staff.ho_va_ten if staff else entry["staff_id"]
-                    if entry.get("is_half_day"):
-                        name = f"{name} (½)"
-                    trinh_do = staff.trinh_do if staff else None
-                    flagged = bool(staff and (staff.mang_thai or staff.sinh_de))
-                    if st.button(
-                        name, key=_chip_key(entry["id"], trinh_do, flagged), width="stretch", wrap=True
-                    ):
-                        _info_dialog(
-                            entry["id"], entry["staff_id"], ref_year, ref_month, staff_by_id,
-                            is_half_day=entry.get("is_half_day", False),
-                        )
+                if allows_half_day:
+                    full_day_entries = [e for e in entries if not e.get("is_half_day")]
+                    half_day_entries = [e for e in entries if e.get("is_half_day")]
+                    for entry in full_day_entries:
+                        _render_chip(entry, staff_by_id, ref_year, ref_month)
+                    if full_day_entries and half_day_entries:
+                        st.html("<hr style='margin:4px 0;border:none;border-top:1px dashed #9CA3AF;'>")
+                    for entry in half_day_entries:
+                        _render_chip(entry, staff_by_id, ref_year, ref_month)
+                else:
+                    for entry in entries:
+                        _render_chip(entry, staff_by_id, ref_year, ref_month)
                 if not is_view_only():
                     if st.button("+", key=f"add_{day.isoformat()}_{base}", width="stretch"):
                         _assign_dialog(day, base, staff_by_id)
