@@ -16,6 +16,17 @@ from app.logic.weights import compute_single_month_weight
 _TRINH_DO_ORDER = {"Đại học": 0, "Cao đẳng": 1}
 
 
+def _format_half(value: float) -> str:
+    """Render a weekday-duty count that may include half-day (weekend_half)
+    occurrences, e.g. 0.5 -> '1/2', 1.5 -> '1 1/2', 2.0 -> '2'."""
+    whole, frac = divmod(round(value * 2), 2)
+    if frac == 0:
+        return str(whole)
+    if whole == 0:
+        return "1/2"
+    return f"{whole} 1/2"
+
+
 def _month_col(year: int, month: int) -> str:
     return f"{year:04d}-{month:02d}"
 
@@ -109,32 +120,34 @@ def _render_weekday_stats() -> None:
     selected_set = set(year_months)
     assignments = repository.get_assignments_for_year_months(year_months)
 
-    counts_by_staff: dict[str, list[int]] = defaultdict(lambda: [0] * 7)
+    counts_by_staff: dict[str, list[float]] = defaultdict(lambda: [0.0] * 7)
     for a in assignments:
         if (a.duty_date.year, a.duty_date.month) in selected_set:
-            counts_by_staff[a.staff_id][a.duty_date.weekday()] += 1
+            counts_by_staff[a.staff_id][a.duty_date.weekday()] += 0.5 if a.is_half_day else 1.0
 
     rows = []
     for staff in all_staff:
-        counts = counts_by_staff.get(staff.bmo_id, [0] * 7)
+        counts = counts_by_staff.get(staff.bmo_id, [0.0] * 7)
+        total = sum(counts)
         row = {"bmo_id": staff.bmo_id, "ho_va_ten": staff.ho_va_ten, "trinh_do": staff.trinh_do}
-        row.update(dict(zip(WEEKDAY_LABELS, counts)))
-        row["Tổng"] = sum(counts)
+        row.update({label: _format_half(c) for label, c in zip(WEEKDAY_LABELS, counts)})
+        row["Tổng"] = _format_half(total)
+        row["_sort_total"] = total
         row["_sort_trinh_do"] = _TRINH_DO_ORDER.get(staff.trinh_do, 2)
         rows.append(row)
 
     df = pd.DataFrame(rows).sort_values(
-        ["_sort_trinh_do", "Tổng"], ascending=[True, False]
-    ).drop(columns=["_sort_trinh_do"]).reset_index(drop=True)
+        ["_sort_trinh_do", "_sort_total"], ascending=[True, False]
+    ).drop(columns=["_sort_trinh_do", "_sort_total"]).reset_index(drop=True)
 
     column_config = {
         "bmo_id": st.column_config.TextColumn("Mã NV"),
         "ho_va_ten": st.column_config.TextColumn("Họ và tên"),
         "trinh_do": st.column_config.TextColumn("Trình độ"),
-        "Tổng": st.column_config.NumberColumn("Tổng"),
+        "Tổng": st.column_config.TextColumn("Tổng"),
     }
     for label in WEEKDAY_LABELS:
-        column_config[label] = st.column_config.NumberColumn(label)
+        column_config[label] = st.column_config.TextColumn(label)
 
     st.dataframe(df, hide_index=True, column_config=column_config)
     st.caption("💡 Bấm vào tiêu đề cột để sắp xếp lại theo cột đó (tăng/giảm dần).")

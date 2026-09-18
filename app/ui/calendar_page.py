@@ -49,8 +49,9 @@ def _staff_label(staff) -> str:
 def _sort_key(entry: dict, staff_by_id: dict) -> tuple:
     staff = staff_by_id.get(entry["staff_id"])
     trinh_do_rank = 0 if (staff and staff.trinh_do == "Đại học") else 1
+    half_day_rank = 1 if entry.get("is_half_day") else 0
     name = staff.ho_va_ten if staff else entry["staff_id"]
-    return (trinh_do_rank, name)
+    return (trinh_do_rank, half_day_rank, name)
 
 
 def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
@@ -263,6 +264,10 @@ def _info_dialog(
 
     if not is_view_only():
         st.divider()
+        toggle_label = "Chuyển thành trực 24/24" if is_half_day else "Chuyển thành trực 12/24"
+        if st.button(toggle_label):
+            repository.set_half_day(assignment_id, not is_half_day)
+            st.rerun()
         if st.button("Hủy phân công", type="secondary"):
             repository.unassign_staff(assignment_id)
             st.rerun()

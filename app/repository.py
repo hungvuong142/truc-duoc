@@ -428,6 +428,13 @@ def unassign_staff(assignment_id: int) -> None:
             session.delete(a)
 
 
+def set_half_day(assignment_id: int, is_half_day: bool) -> None:
+    with get_session() as session:
+        a = session.get(Assignment, assignment_id)
+        if a is not None:
+            a.is_half_day = is_half_day
+
+
 def find_assignment(duty_date: date, base: str, staff_id: str) -> dict | None:
     """The assignment (if any) for this staff on this date at this base --
     used to detect a same-day cross-base conflict before creating a new one
