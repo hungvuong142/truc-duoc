@@ -9,7 +9,7 @@ import streamlit as st
 from app import repository
 from app.config import GIOI_TINH_OPTIONS, TRINH_DO_OPTIONS
 from app.ui.access import is_view_only
-from app.ui.xlsx_io import render_template_download_and_upload
+from app.ui.xlsx_io import render_export_button, render_template_download_and_upload
 
 STAFF_TEMPLATE_COLUMNS = [
     "bmo_id", "ho_va_ten", "tuoi", "gioi_tinh", "trinh_do", "vi_tri",
@@ -34,6 +34,8 @@ HOLIDAY_TEMPLATE_SAMPLE = {
     "name": "Quốc khánh", "is_recurring": True, "month": 9, "day": 2, "year": None,
 }
 
+NINH_BINH_EXPORT_COLUMNS = ["bmo_id", "ho_va_ten", "trinh_do", "vi_tri", "di_ninh_binh"]
+
 
 def _render_staff_editor() -> None:
     st.subheader("Nhân viên")
@@ -47,6 +49,7 @@ def _render_staff_editor() -> None:
             key_prefix="staff",
         )
     df = repository.get_staff_df()
+    render_export_button(df=df, columns=STAFF_TEMPLATE_COLUMNS, filename="NhanVien_hien_tai.xlsx", key="staff_export")
     column_config = {
         "bmo_id": st.column_config.TextColumn("Mã NV", help="Để trống để tự sinh mã mới"),
         "ho_va_ten": st.column_config.TextColumn("Họ và tên", required=True),
@@ -81,9 +84,7 @@ def _render_staff_editor() -> None:
 def _render_ninh_binh_editor() -> None:
     st.subheader("Đi cơ sở Ninh Bình")
     st.caption(
-        "Tích chọn nhân viên đi cơ sở Ninh Bình theo từng tháng. Cột 'Cơ sở Ninh Bình' ở sheet "
-        "Nhân viên phản ánh tháng hiện tại của bảng này (tính lại ngay sau khi lưu, hoặc mỗi khi "
-        "app khởi động lại)."
+        "Tích chọn nhân viên đi cơ sở Ninh Bình theo từng tháng."
     )
     view_only = is_view_only()
     today = date.today()
@@ -104,6 +105,11 @@ def _render_ninh_binh_editor() -> None:
     if df.empty:
         st.info("Chưa có nhân viên đang làm việc để phân công.")
         return
+
+    render_export_button(
+        df=df, columns=NINH_BINH_EXPORT_COLUMNS,
+        filename=f"DiNinhBinh_{year}_{month:02d}.xlsx", key=f"ninh_binh_export_{year}_{month}",
+    )
 
     column_config = {
         "bmo_id": st.column_config.TextColumn("Mã NV"),
@@ -139,6 +145,9 @@ def _render_duty_weights_editor() -> None:
             key_prefix="duty_weights",
         )
     df = repository.get_duty_weights_df()
+    render_export_button(
+        df=df, columns=DUTY_WEIGHT_TEMPLATE_COLUMNS, filename="TrongSoTruc_hien_tai.xlsx", key="duty_weights_export"
+    )
     column_config = {
         "duty_code": st.column_config.NumberColumn("Mã", required=True, step=1),
         "duty_type": st.column_config.TextColumn("Loại trực", required=True),
@@ -174,6 +183,10 @@ def _render_holidays_editor() -> None:
 
     st.markdown("**Lễ định kỳ hằng năm**")
     recurring_df = repository.get_holidays_df(is_recurring=True)
+    render_export_button(
+        df=recurring_df.assign(is_recurring=True), columns=HOLIDAY_TEMPLATE_COLUMNS,
+        filename="NgayLe_DinhKy_hien_tai.xlsx", key="recurring_holidays_export",
+    )
     recurring_column_config = {
         "id": None,
         "name": st.column_config.TextColumn("Tên ngày lễ", required=True, width="medium"),
@@ -199,6 +212,10 @@ def _render_holidays_editor() -> None:
 
     st.markdown("**Nghỉ lễ chỉ định (theo năm cụ thể)**")
     manual_df = repository.get_holidays_df(is_recurring=False)
+    render_export_button(
+        df=manual_df.assign(is_recurring=False), columns=HOLIDAY_TEMPLATE_COLUMNS,
+        filename="NgayLe_ChiDinh_hien_tai.xlsx", key="manual_holidays_export",
+    )
     manual_column_config = {
         "id": None,
         "name": st.column_config.TextColumn("Tên", required=True, width="medium"),

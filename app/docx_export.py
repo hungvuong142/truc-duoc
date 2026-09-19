@@ -62,7 +62,7 @@ SECTION_HEADINGS = {
 # (Đại học/Cao đẳng columns) were wrapping onto multiple lines at 12pt; a
 # smaller table font plus the wider name columns below give names more
 # room to fit on one line.
-TABLE_FONT_SIZE_PT = 10
+TABLE_FONT_SIZE_PT = 9
 # Config here
 TABLE_COL_WIDTHS_CM = [1.5, 1.2, 3.7, 3.7, 3.7, 3.7, 1.0]
 # Config here -- Word's "Allow row to break across pages", off, so a tall
@@ -284,6 +284,24 @@ def _add_roster_header_rows(table) -> None:
         _add_centered_run(header2[idx], label, size=TABLE_FONT_SIZE_PT)
 
 
+def _shade_cell(cell, fill_hex: str) -> None:
+    """Word has no row-level fill, so a shaded row is every cell shaded."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    for existing in tc_pr.findall(qn("w:shd")):
+        tc_pr.remove(existing)
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill_hex.lstrip("#"))
+    # CT_TcPr is a strict sequence: shd must precede these siblings.
+    for tag in ("w:noWrap", "w:tcMar", "w:textDirection", "w:tcFitText", "w:vAlign", "w:hideMark"):
+        successor = tc_pr.find(qn(tag))
+        if successor is not None:
+            successor.addprevious(shd)
+            return
+    tc_pr.append(shd)
+
+
 def add_base_section(doc: Document, heading: str, rows: list[RosterRow]) -> None:
     heading_p = doc.add_paragraph()
     heading_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -311,6 +329,8 @@ def add_base_section(doc: Document, heading: str, rows: list[RosterRow]) -> None
             p = cell.paragraphs[0]
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER if idx < 2 else WD_ALIGN_PARAGRAPH.LEFT
             _add_multiline_run(p, value, size=TABLE_FONT_SIZE_PT)
+            if row.shading:
+                _shade_cell(cell, row.shading)
 
     _set_col_widths(table, TABLE_COL_WIDTHS_CM)
     if PREVENT_TABLE_ROW_SPLIT:

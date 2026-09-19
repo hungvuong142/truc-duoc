@@ -14,6 +14,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import get_readonly_session, get_session
+from app.logic.assignment_io import STATUS_UNCHANGED, SlotPlan
 from app.logic.types import AssignmentRecord, DutyWeightRule, HolidayRule, StaffInfo
 from app.models import Assignment, DutyWeight, Holiday, NinhBinhAssignment, Staff
 
@@ -472,14 +473,22 @@ class DuplicateAssignmentError(Exception):
     pass
 
 
+def _to_assignment_record(r: Assignment) -> AssignmentRecord:
+    return AssignmentRecord(
+        duty_date=r.duty_date, base=r.base, staff_id=r.staff_id,
+        is_half_day=r.is_half_day, is_cao_dang_cover=r.is_cao_dang_cover,
+    )
+
+
 def get_assignments_for_range(start: date, end: date) -> list[AssignmentRecord]:
     with get_readonly_session() as session:
         stmt = select(Assignment).where(Assignment.duty_date >= start, Assignment.duty_date <= end)
-        rows = session.scalars(stmt).all()
-        return [
-            AssignmentRecord(duty_date=r.duty_date, base=r.base, staff_id=r.staff_id, is_half_day=r.is_half_day)
-            for r in rows
-        ]
+        return [_to_assignment_record(r) for r in session.scalars(stmt).all()]
+
+
+def get_all_assignments() -> list[AssignmentRecord]:
+    with get_readonly_session() as session:
+        return [_to_assignment_record(r) for r in session.scalars(select(Assignment)).all()]
 
 
 def get_assignments_for_months(year: int, month: int, n_trailing: int) -> list[AssignmentRecord]:
@@ -506,9 +515,14 @@ def get_assignments_for_year_months(year_months: list[tuple[int, int]]) -> list[
     return get_assignments_for_range(start, end)
 
 
-def assign_staff(duty_date: date, base: str, staff_id: str, is_half_day: bool = False) -> None:
+def assign_staff(
+    duty_date: date, base: str, staff_id: str, is_half_day: bool = False, is_cao_dang_cover: bool = False
+) -> None:
     with get_session() as session:
-        session.add(Assignment(duty_date=duty_date, base=base, staff_id=staff_id, is_half_day=is_half_day))
+        session.add(Assignment(
+            duty_date=duty_date, base=base, staff_id=staff_id,
+            is_half_day=is_half_day, is_cao_dang_cover=is_cao_dang_cover,
+        ))
         try:
             session.flush()
         except IntegrityError as exc:
@@ -544,17 +558,20 @@ def find_assignment(duty_date: date, base: str, staff_id: str) -> dict | None:
             return None
         return {
             "id": a.id, "duty_date": a.duty_date, "base": a.base, "staff_id": a.staff_id,
-            "is_half_day": a.is_half_day,
+            "is_half_day": a.is_half_day, "is_cao_dang_cover": a.is_cao_dang_cover,
         }
 
 
-def move_assignment(assignment_id: int, new_base: str, is_half_day: bool | None = None) -> None:
+def move_assignment(
+    assignment_id: int, new_base: str, is_half_day: bool | None = None, is_cao_dang_cover: bool | None = None
+) -> None:
     """Re-assign an existing assignment to a different base (same date,
     same staff) -- used when the user confirms moving a staff member from
     one base to the other on the same day instead of double-booking them.
-    `is_half_day` overrides the half-day flag too when given (the calendar
-    dialog's current half-day checkbox should apply uniformly whether a
-    staff member is freshly assigned or moved into the target base)."""
+    `is_half_day`/`is_cao_dang_cover` override those flags too when given
+    (the calendar dialog's current checkboxes should apply uniformly
+    whether a staff member is freshly assigned or moved into the target
+    base)."""
     with get_session() as session:
         a = session.get(Assignment, assignment_id)
         if a is not None:
@@ -562,6 +579,8 @@ def move_assignment(assignment_id: int, new_base: str, is_half_day: bool | None 
             a.base = new_base
             if is_half_day is not None:
                 a.is_half_day = is_half_day
+            if is_cao_dang_cover is not None:
+                a.is_cao_dang_cover = is_cao_dang_cover
             try:
                 session.flush()
             except IntegrityError as exc:
@@ -570,12 +589,39 @@ def move_assignment(assignment_id: int, new_base: str, is_half_day: bool | None 
                 ) from exc
 
 
-def delete_all_assignments() -> int:
-    """Wipe every duty-schedule assignment (all months), used by the
-    calendar page's "Xóa tất cả lịch trực" reset action. Irreversible."""
+def delete_assignments_in_month(year: int, month: int) -> int:
+    """Wipe the duty-schedule assignments dated within one calendar month
+    (both bases), used by the calendar page's "Xóa lịch tháng" reset action.
+    Other months are untouched. Irreversible."""
+    start = date(year, month, 1)
+    end = date(year, month, calendar.monthrange(year, month)[1])
     with get_session() as session:
-        result = session.execute(delete(Assignment))
+        result = session.execute(
+            delete(Assignment).where(Assignment.duty_date >= start, Assignment.duty_date <= end)
+        )
         return result.rowcount
+
+
+def apply_assignment_import(plans: list[SlotPlan]) -> None:
+    """Write an import plan (see logic/assignment_io.plan_import) in one
+    transaction: each `new`/`override` slot is replaced wholesale by the
+    file's content; `unchanged` slots and every slot the file doesn't
+    mention are left alone. The delete executes immediately (Core-level), so
+    the re-insert doesn't trip the (date, base, staff) unique constraint."""
+    with get_session() as session:
+        for plan in plans:
+            if plan.status == STATUS_UNCHANGED:
+                continue
+            session.execute(
+                delete(Assignment).where(Assignment.duty_date == plan.duty_date, Assignment.base == plan.base)
+            )
+            session.add_all(
+                Assignment(
+                    duty_date=plan.duty_date, base=plan.base, staff_id=e.staff_id,
+                    is_half_day=e.is_half_day, is_cao_dang_cover=e.is_cao_dang_cover,
+                )
+                for e in plan.entries
+            )
 
 
 def get_assignments_with_ids_for_range(start: date, end: date) -> list[dict]:
@@ -587,7 +633,7 @@ def get_assignments_with_ids_for_range(start: date, end: date) -> list[dict]:
         return [
             {
                 "id": r.id, "duty_date": r.duty_date, "base": r.base, "staff_id": r.staff_id,
-                "is_half_day": r.is_half_day,
+                "is_half_day": r.is_half_day, "is_cao_dang_cover": r.is_cao_dang_cover,
             }
             for r in rows
         ]

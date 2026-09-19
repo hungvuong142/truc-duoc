@@ -50,3 +50,4 @@ class AssignmentRecord:
     base: str
     staff_id: str
     is_half_day: bool = False
+    is_cao_dang_cover: bool = False

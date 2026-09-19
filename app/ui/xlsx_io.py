@@ -19,6 +19,25 @@ def _make_template_bytes(columns: list[str], sample_row: dict | None) -> bytes:
     return buffer.getvalue()
 
 
+def make_xlsx_bytes(df: pd.DataFrame, columns: list[str]) -> bytes:
+    buffer = io.BytesIO()
+    df.reindex(columns=columns).to_excel(buffer, index=False, engine="openpyxl")
+    return buffer.getvalue()
+
+
+def render_export_button(*, df: pd.DataFrame, columns: list[str], filename: str, key: str) -> None:
+    """Download this sheet's current data as an .xlsx, in the same column
+    order as its "Tải file mẫu" template -- so the file can be re-uploaded
+    as-is. A pure read, so it's shown regardless of view-only mode."""
+    st.download_button(
+        "⬇️ Xuất dữ liệu hiện tại",
+        data=make_xlsx_bytes(df, columns),
+        file_name=filename,
+        mime=_XLSX_MIME,
+        key=key,
+    )
+
+
 def render_template_download_and_upload(
     *,
     template_filename: str,

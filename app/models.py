@@ -95,6 +95,10 @@ class Assignment(Base):
     base: Mapped[str] = mapped_column(String, nullable=False)
     staff_id: Mapped[str] = mapped_column(String, ForeignKey("staff.bmo_id"), nullable=False)
     is_half_day: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # A Đại học pharmacist covering a Cao đẳng slot for this one assignment:
+    # the staff's own trinh_do is untouched, but this assignment counts
+    # toward the Cao đẳng group in stats (see logic/weights.py callers).
+    is_cao_dang_cover: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()

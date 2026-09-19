@@ -85,6 +85,7 @@ def _ensure_column(table: str, column: str, ddl_type: str, default_sql: str) -> 
 def init_db() -> None:
     Base.metadata.create_all(engine)
     _ensure_column("assignments", "is_half_day", "BOOLEAN", "FALSE")
+    _ensure_column("assignments", "is_cao_dang_cover", "BOOLEAN", "FALSE")
 
 
 @contextmanager

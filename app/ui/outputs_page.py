@@ -59,8 +59,9 @@ def _generate(year: int, month: int) -> None:
     last_day = calendar.monthrange(year, month)[1]
     assignments = repository.get_assignments_for_range(date(year, month, 1), date(year, month, last_day))
     staff_by_id = repository.get_all_staff_by_id()
+    holidays = repository.get_all_holidays()
     tables = {
-        base: build_roster_rows(assignments, staff_by_id, base, year, month)
+        base: build_roster_rows(assignments, staff_by_id, base, year, month, holidays)
         for base in (BASE_HANOI, BASE_NINH_BINH)
     }
     st.session_state[_RESULT_KEY] = {
