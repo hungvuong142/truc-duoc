@@ -28,7 +28,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from app import repository
-from app.config import BASE_SHORT_LABELS, BASES, N_TRAILING_MONTHS, NHA_THUOC_KEYWORD, WEEKDAY_LABELS
+from app.config import BASE_SHORT_LABELS, BASES, N_TRAILING_MONTHS, WEEKDAY_LABELS
 from app.logic.calendar_rules import classify_position, resolve_holiday_name
 from app.logic.weights import compute_monthly_weights, compute_peer_average, compute_single_month_weight
 from app.repository import DuplicateAssignmentError
@@ -50,8 +50,7 @@ _WEEKEND_BG = "rgba(37, 99, 235, 0.08)"
 _HOLIDAY_BG = "rgba(220, 38, 38, 0.12)"
 _TODAY_OVERLAY = "rgba(245, 158, 11, 0.5)"  # ~50% opacity, layered on top
 
-# Chip text is 20% smaller than the default 1rem so long names wrap less in
-# the narrow half-cell (CSHN/CSNB share one day column).
+# Config here -- chip text size (1rem is Streamlit's default button text).
 _CHIP_FONT_SIZE = "1rem"
 
 # Config here -- where the "+" (assign) button sits under its base's chips:
@@ -88,18 +87,9 @@ def _staff_label(staff) -> str:
 
 
 def _chip_name(staff) -> str:
-    """"NGUYỄN THỊ THU · K1": name upper-cased, then a short vi_tri only for
-    Nhà thuốc staff ("Nhà thuốc K1" -> "K1"); Nội trú -- the majority -- gets
-    no suffix, which keeps the chip short in the narrow half-cell."""
-    name = staff.ho_va_ten.upper()
-    if classify_position(staff.vi_tri) == "Nội trú":
-        return name
-    short = staff.vi_tri.replace(NHA_THUOC_KEYWORD, "").strip()
-    return f"{name} · {short or NHA_THUOC_KEYWORD}"
-
-
-def _chip_tooltip(staff) -> str:
-    """Full "NAME (vi_tri)" shown on hover."""
+    """"NGUYỄN THỊ THU (Nhà thuốc K1)": name upper-cased, then vi_tri exactly as
+    stored, so the chip shows at a glance whether the staff is Nội trú or
+    Nhà thuốc."""
     name = staff.ho_va_ten.upper()
     return f"{name} ({staff.vi_tri})" if staff.vi_tri else name
 
@@ -523,8 +513,7 @@ def _render_chip(entry: dict, staff_by_id: dict, ref_year: int, ref_month: int) 
     flagged = bool(staff and (staff.mang_thai or staff.sinh_de))
     cao_dang_cover = bool(entry.get("is_cao_dang_cover"))
     if st.button(
-        name, key=_chip_key(entry["id"], trinh_do, flagged, cao_dang_cover), width="stretch", wrap=True,
-        help=_chip_tooltip(staff) if staff else None,
+        name, key=_chip_key(entry["id"], trinh_do, flagged, cao_dang_cover), width="stretch", wrap=True
     ):
         _info_dialog(
             entry["id"], entry["staff_id"], ref_year, ref_month, staff_by_id,
