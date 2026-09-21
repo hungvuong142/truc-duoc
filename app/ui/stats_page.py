@@ -23,8 +23,8 @@ def _format_half(value: float) -> str:
     if frac == 0:
         return str(whole)
     if whole == 0:
-        return "1/2"
-    return f"{whole} 1/2"
+        return "0,5"
+    return f"{whole} + 0,5"
 
 
 def _month_col(year: int, month: int) -> str:
@@ -72,7 +72,12 @@ def _render_weight_stats() -> None:
     rows = []
     for staff in all_staff:
         effective_trinh_do = "Cao đẳng" if staff.bmo_id in cao_dang_cover_ids else staff.trinh_do
-        row = {"bmo_id": staff.bmo_id, "ho_va_ten": staff.ho_va_ten, "trinh_do": effective_trinh_do}
+        row = {
+            "bmo_id": staff.bmo_id,
+            "ho_va_ten": staff.ho_va_ten, 
+            "trinh_do": effective_trinh_do,
+            "vi_tri": staff.vi_tri,
+        }
         total_selected = 0.0
         for year_, month_ in year_months:
             weight = compute_single_month_weight(
@@ -101,6 +106,7 @@ def _render_weight_stats() -> None:
         "bmo_id": st.column_config.TextColumn("Mã NV"),
         "ho_va_ten": st.column_config.TextColumn("Họ và tên"),
         "trinh_do": st.column_config.TextColumn("Trình độ"),
+        "vi_tri": st.column_config.TextColumn("Vị trí"),
     }
     for year_, month_ in year_months:
         column_config[_month_col(year_, month_)] = st.column_config.NumberColumn(
@@ -137,7 +143,9 @@ def _build_weekday_df(year_months: list[tuple[int, int]], all_staff: list, assig
             effective_trinh_do = "Cao đẳng" if key in cover_keys else staff.trinh_do
             row = {
                 "bmo_id": staff.bmo_id,
-                "ho_va_ten": staff.ho_va_ten, "trinh_do": effective_trinh_do,
+                "ho_va_ten": staff.ho_va_ten, 
+                "trinh_do": effective_trinh_do,
+                "vi_tri": staff.vi_tri,
                 "thang": _month_col(year_, month_), 
             }
             row.update({label: _format_half(c) for label, c in zip(WEEKDAY_LABELS, day_counts)})
@@ -170,6 +178,7 @@ def _render_weekday_stats() -> None:
         "bmo_id": st.column_config.TextColumn("Mã NV"),
         "ho_va_ten": st.column_config.TextColumn("Họ và tên"),
         "trinh_do": st.column_config.TextColumn("Trình độ"),
+        "vi_tri": st.column_config.TextColumn("Vị trí"),
         "thang": st.column_config.TextColumn("Tháng"),
         "Tổng": st.column_config.TextColumn("Tổng"),
     }
